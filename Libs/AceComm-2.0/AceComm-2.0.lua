@@ -1,6 +1,6 @@
 --[[
 Name: AceComm-2.0
-Revision: $Rev: 1054 $
+Revision: $Rev: 1072 $
 Developed by: The Ace Development Team (http://www.wowace.com/index.php/The_Ace_Development_Team)
 Inspired By: Ace 1.x by Turan (turan@gryphon.com)
 Website: http://www.wowace.com/
@@ -13,18 +13,15 @@ License: LGPL v2.1
 ]]
 
 local MAJOR_VERSION = "AceComm-2.0"
-local MINOR_VERSION = "$Revision: 1054 $"
+local MINOR_VERSION = "$Revision: 1072 $"
 
 if not AceLibrary then error(MAJOR_VERSION .. " requires AceLibrary") end
 if not AceLibrary:IsNewVersion(MAJOR_VERSION, MINOR_VERSION) then return end
 
 if not AceLibrary:HasInstance("AceOO-2.0") then error(MAJOR_VERSION .. " requires AceOO-2.0") end
 
-local _G = getfenv(0)
-
 local AceOO = AceLibrary("AceOO-2.0")
-local Mixin = AceOO.Mixin
-local AceComm = Mixin {
+local AceComm = AceOO.Mixin {
 	"SendCommMessage",
 	"SendPrioritizedCommMessage",
 	"RegisterComm",
@@ -39,7 +36,7 @@ local AceComm = Mixin {
 
 AceComm.hooks = {}
 
-local AceEvent = AceLibrary:HasInstance("AceEvent-2.0") and AceLibrary("AceEvent-2.0")
+local AceEvent
 
 local byte_a = ("a"):byte()
 local byte_z = ("z"):byte()
@@ -73,10 +70,12 @@ local byte_inf = ("@"):byte()
 local byte_ninf = ("$"):byte()
 local byte_nan = ("!"):byte()
 
+local fake_nil = {}
+
 local inf = 1/0
 local nan = 0/0
 
-local _G = _G
+local _G = getfenv(0)
 
 local ChatThrottleLib = _G.ChatThrottleLib
 
@@ -86,15 +85,12 @@ local math_min = _G.math.min
 local table_concat = _G.table.concat
 local type = _G.type
 local unpack = _G.unpack
-local ipairs = _G.ipairs
 local pairs = _G.pairs
 local next = _G.next
 local select = _G.select
-local UnitName = _G.UnitName
 local setmetatable = _G.setmetatable
 local GetTime = _G.GetTime
 local AceLibrary = _G.AceLibrary
-local GetNetStats = _G.GetNetStats
 local GetChannelName = _G.GetChannelName
 local LeaveChannelByName = _G.LeaveChannelByName
 local JoinChannelByName = _G.JoinChannelByName
@@ -108,10 +104,9 @@ local math_ldexp = _G.math.ldexp
 local GetItemInfo = _G.GetItemInfo
 local error = _G.error
 local pcall = _G.pcall
-local MiniMapBattlefieldFrame = _G.MiniMapBattlefieldFrame
 local GetNumRaidMembers = _G.GetNumRaidMembers
 local GetNumPartyMembers = _G.GetNumPartyMembers
-local UnitInRaid = UnitInRaid
+local UnitInRaid = _G.UnitInRaid
 local IsInGuild = _G.IsInGuild
 local GetCVar = _G.GetCVar
 local SetCVar = _G.SetCVar
@@ -119,10 +114,10 @@ local IsResting = _G.IsResting
 local rawget = _G.rawget
 local GetAddOnMetadata = _G.GetAddOnMetadata
 local IsAddOnLoaded = _G.IsAddOnLoaded
-local CreateFrame = _G.CreateFrame
 local geterrorhandler = _G.geterrorhandler
 local hooksecurefunc = _G.hooksecurefunc
 local GetFramerate = _G.GetFramerate
+local IsInInstance = _G.IsInInstance
 
 local player = UnitName("player")
 
@@ -206,7 +201,7 @@ local function IsInChannel(chan)
 	return GetChannelName(chan) ~= 0
 end
 
-local Encode, EncodeByte
+local Encode, EncodeByte, EncodeBytes
 do
 	local drunkHelper_t = {
 		[29] = "\029\030",
@@ -452,30 +447,19 @@ local function SupposedToBeInChannel(chan)
 	end
 end
 
-local function LeaveAceCommChannels(all)
-	if all then
-		shutdown = true
-	end
-	local _,a,_,b,_,c,_,d,_,e,_,f,_,g,_,h,_,i,_,j = GetChannelList()
-	local tmp = new()
-	tmp[1] = a
-	tmp[2] = b
-	tmp[3] = c
-	tmp[4] = d
-	tmp[5] = e
-	tmp[6] = f
-	tmp[7] = g
-	tmp[8] = h
-	tmp[9] = i
-	tmp[10] = j
-	for _,v in ipairs(tmp) do
-		if v and v:find("^AceComm") then
-			if not SupposedToBeInChannel(v) then
-				LeaveChannelByName(v)
-			end
+local function checkChannelList(...)
+	for i = 2, select("#", ...), 2 do
+		local c = select(i, ...)
+		if c and not SupposedToBeInChannel(c) then
+			LeaveChannelByName(c)
 		end
 	end
-	tmp = del(tmp)
+end
+local function LeaveAceCommChannels(noShutdown)
+	if not noShutdown then
+		shutdown = true
+	end
+	checkChannelList(GetChannelList())
 end
 
 local lastRefix = 0
@@ -485,11 +469,9 @@ local function RefixAceCommChannelsAndEvents()
 		return
 	end
 	lastRefix = GetTime()
-	LeaveAceCommChannels(false)
+	LeaveAceCommChannels(true)
 	
 	local channel = false
-	local whisper = false
-	local addon = false
 	if SupposedToBeInChannel("AceComm") then
 		JoinChannel("AceComm")
 		channel = true
@@ -507,7 +489,13 @@ local function RefixAceCommChannelsAndEvents()
 		end
 	end
 	if AceComm_registry.WHISPER or AceComm_registry.GROUP or AceComm_registry.PARTY or AceComm_registry.RAID or AceComm_registry.BATTLEGROUND or AceComm_registry.GUILD then
-		addon = true
+		if not AceComm:IsEventRegistered("CHAT_MSG_ADDON") then
+			AceComm:RegisterEvent("CHAT_MSG_ADDON")
+		end
+	else
+		if AceComm:IsEventRegistered("CHAT_MSG_ADDON") then
+			AceComm:UnregisterEvent("CHAT_MSG_ADDON")
+		end
 	end
 	
 	if channel then
@@ -535,16 +523,6 @@ local function RefixAceCommChannelsAndEvents()
 		end
 		if AceComm:IsEventRegistered("CHAT_MSG_CHANNEL_LEAVE") then
 			AceComm:UnregisterEvent("CHAT_MSG_CHANNEL_LEAVE")
-		end
-	end
-	
-	if addon then
-		if not AceComm:IsEventRegistered("CHAT_MSG_ADDON") then
-			AceComm:RegisterEvent("CHAT_MSG_ADDON")
-		end
-	else
-		if AceComm:IsEventRegistered("CHAT_MSG_ADDON") then
-			AceComm:UnregisterEvent("CHAT_MSG_ADDON")
 		end
 	end
 end
@@ -578,8 +556,8 @@ do
 			if SupposedToBeInChannel(channel) then
 				self:ScheduleEvent("AceComm-JoinChannel-" .. channel, JoinChannel, 0, channel)
 			end
-			if AceComm.userRegistry[channel] then
-				AceComm.userRegistry[channel] = del(AceComm.userRegistry[channel])
+			if self.userRegistry[channel] then
+				self.userRegistry[channel] = del(self.userRegistry[channel])
 			end
 		elseif kind == "YOU_JOINED" then
 			if not (num == 0 and deadName or channel):find("^AceComm") then
@@ -611,9 +589,11 @@ end
 
 local SerializeAndEncode
 do
-	local recurse
+	local recurse = {}
 	local function _Serialize(v, textToHash, sb, drunk)
 		local kind = type(v)
+		-- Note that the ordering of these if/elseif's matters, don't
+		-- change it unless you know what you're doing.
 		if kind == "boolean" then
 			if v then
 				sb[#sb+1] = "B" -- true
@@ -622,11 +602,20 @@ do
 				sb[#sb+1] = "b" -- false
 				return 1
 			end
-		elseif not v then
+		elseif not v or v == fake_nil then
 			sb[#sb+1] = "/" -- nil
 			return 1
 		elseif kind == "number" then
-			if v == math_floor(v) then
+			-- v == math_floor(v) will also return true if
+			-- v is 1/0 or -1/0, so we need to check that first.
+			-- Thanks to Xinhuan for finding the problem.
+			if v == inf then
+				sb[#sb+1] = "@"
+				return 1
+			elseif v == -inf then
+				sb[#sb+1] = "$"
+				return 1
+			elseif v == math_floor(v) then
 				if v <= 2^7-1 and v >= -2^7 then
 					if v < 0 then
 						v = v + 256
@@ -656,12 +645,6 @@ do
 					sb[#sb+1] = EncodeBytes(drunk, math_floor(v / 256^7), math_floor(v / 256^6) % 256, math_floor(v / 256^5) % 256, math_floor(v / 256^4) % 256, math_floor(v / 256^3) % 256, math_floor(v / 256^2) % 256, math_floor(v / 256) % 256, v % 256)
 					return 9
 				end
-			elseif v == inf then
-				sb[#sb+1] = "@"
-				return 1
-			elseif v == -inf then
-				sb[#sb+1] = "$"
-				return 1
 			elseif v ~= v then -- not a number
 				sb[#sb+1] = "!"
 				return 1
@@ -777,13 +760,12 @@ do
 					return 3 + len
 				end
 			end
-			local t = new()
 			local islist = false
 			local n = #v
 			if n >= 1 then
 				islist = true
 				for k,u in pairs(v) do
-					if type(k) ~= "number" or k < 1 then
+					if type(k) ~= "number" or k < 1 or k > n then
 						islist = false
 						break
 					end
@@ -802,11 +784,8 @@ do
 			local len = 0
 			local num = 0
 			if islist then
-				num = n * 4
-				while v[num] == nil do
-					num = num - 1
-				end
-				for i = 1, num do
+				num = n
+				for i = 1, n do
 					len = len + _Serialize(v[i], textToHash, sb, drunk)
 				end
 			elseif isset then
@@ -821,7 +800,6 @@ do
 					num = num + 1
 				end
 			end
-			t = del(t)
 			for k in pairs(recurse) do
 				recurse[k] = nil
 			end
@@ -860,9 +838,6 @@ do
 	end
 	
 	function SerializeAndEncode(value, textToHash, drunk)
-		if not recurse then
-			recurse = new()
-		end
 		local sb = new()
 		sb[1] = ""
 		sb[2] = ""
@@ -1058,20 +1033,17 @@ do
 			local a, b, c = value:byte(start, start + 3)
 			local hash = a * 256^2 + b * 256 + c
 			local curr = start + 2
-			if not AceComm.classes[hash] then
-				return nil, finish
-			end
 			local class = AceComm.classes[hash]
-			if type(class.Deserialize) ~= "function" or type(class.prototype.Serialize) ~= "function" then
-				return nil, finish
-			end
 			local tmp = new()
 			for i = 1, num do
 				local v
 				v, curr = _Deserialize(value, curr + 1, hashToText)
 				tmp[i] = v
 			end
-			local object = class:Deserialize(unpack(tmp, 1, num))
+			local object
+			if class and type(class.Deserialize) == "function" and type(class.prototype.Serialize) == "function" then
+				object = class:Deserialize(unpack(tmp, 1, num))
+			end
 			tmp = del(tmp)
 			return object, curr+1
 		elseif x == byte_t or x == byte_T then
@@ -1112,7 +1084,7 @@ do
 end
 
 local function GetCurrentGroupDistribution()
-	if MiniMapBattlefieldFrame.status == "active" then
+	if select(2, IsInInstance()) == "pvp" then
 		return "BATTLEGROUND"
 	elseif UnitInRaid("player") then
 		return "RAID"
@@ -1125,7 +1097,7 @@ local function IsInDistribution(dist, customChannel)
 	if dist == "GROUP" then
 		return not not GetCurrentGroupDistribution()
 	elseif dist == "BATTLEGROUND" then
-		return MiniMapBattlefieldFrame.status == "active"
+		return select(2, IsInInstance()) == "pvp"
 	elseif dist == "RAID" then
 		return GetNumRaidMembers() > 0
 	elseif dist == "PARTY" then
@@ -1170,7 +1142,7 @@ function AceComm:RegisterComm(prefix, distribution, method, a4)
 		method = "OnCommReceive"
 	end
 	if type(method) == "string" and type(self[method]) ~= "function" and type(self[method]) ~= "table" then
-		AceEvent:error("Cannot register comm %q to method %q, it does not exist", prefix, method)
+		AceComm:error("Cannot register comm %q to method %q, it does not exist", prefix, method)
 	end
 	
 	local registry = AceComm_registry
@@ -1491,9 +1463,7 @@ local function SendMessage(prefix, priority, distribution, person, message, text
 				firstGuildMessage = false
 				if GetCVar("Sound_EnableErrorSpeech") == "1" then
 					SetCVar("Sound_EnableErrorSpeech", "0")
-					AceLibrary("AceEvent-2.0"):ScheduleEvent("AceComm-EnableErrorSpeech", function()
-						SetCVar("Sound_EnableErrorSpeech", "1")
-					end, 10)
+					AceEvent:ScheduleEvent("AceComm-EnableErrorSpeech", SetCVar, 10, "Sound_EnableErrorSpeech", "1")
 				end
 				recentGuildMessage = GetTime() + 10
 			end
@@ -1533,23 +1503,16 @@ function AceComm:SendPrioritizedCommMessage(priority, distribution, person, ...)
 		AceComm:error("`SetCommPrefix' must be called before sending a message.")
 	end
 
-	local ret = nil
-	local n = select('#', ...)
-	if includePerson or n > 1 then
-		local message = new()
-		if includePerson then
-			message[1] = person
-			person = nil
-		end
-		for i = 1, n do
-			message[includePerson and i + 1 or i] = select(i, ...)
-		end
-		ret = SendMessage(AceComm.prefixTextToHash[prefix], priority, distribution, person, message, self.commMemoTextToHash)
-		message = del(message)
-	else
-		ret = SendMessage(AceComm.prefixTextToHash[prefix], priority, distribution, person, (select(1, ...)), self.commMemoTextToHash)
+	local message = new()
+	if includePerson then message[1] = person end
+	for i = 1, select('#', ...) do
+		local x = select(i, ...)
+		if type(x) == "nil" then x = fake_nil end
+		message[includePerson and i + 1 or i] = x
 	end
-
+	if includePerson then person = nil end
+	local ret = SendMessage(AceComm.prefixTextToHash[prefix], priority, distribution, person, message, self.commMemoTextToHash)
+	message = del(message)
 	return ret
 end
 
@@ -1857,7 +1820,7 @@ local function HandleMessage(prefix, message, distribution, sender, customChanne
 end
 
 function AceComm:CHAT_MSG_ADDON(prefix, message, distribution, sender)
-	if sender == player and not AceComm.enableLoopback and distribution ~= "WHISPER" then
+	if sender == player and not self.enableLoopback and distribution ~= "WHISPER" then
 		return
 	end
 	if message == "" then
@@ -1880,10 +1843,7 @@ function AceComm:CHAT_MSG_ADDON(prefix, message, distribution, sender)
 end
 
 function AceComm:CHAT_MSG_CHANNEL(text, sender, _, _, _, _, _, _, channel)
-	if sender == player or not channel:find("^AceComm") then
-		return
-	end
-	if text == "" then
+	if text == "" or sender == player or not channel:find("^AceComm") then
 		return
 	end
 	text = Decode(text, true)
@@ -1926,10 +1886,10 @@ function AceComm:CHAT_MSG_CHANNEL_LIST(text, _, _, _, _, _, _, _, channel)
 		return
 	end
 	
-	if not AceComm.userRegistry[channel] then
-		AceComm.userRegistry[channel] = new()
+	if not self.userRegistry[channel] then
+		self.userRegistry[channel] = new()
 	end
-	local t = AceComm.userRegistry[channel]
+	local t = self.userRegistry[channel]
 	for k in text:gmatch("[^, @%*#]+") do
 		t[k] = true
 	end
@@ -1940,10 +1900,10 @@ function AceComm:CHAT_MSG_CHANNEL_JOIN(_, user, _, _, _, _, _, _, channel)
 		return
 	end
 	
-	if not AceComm.userRegistry[channel] then
-		AceComm.userRegistry[channel] = new()
+	if not self.userRegistry[channel] then
+		self.userRegistry[channel] = new()
 	end
-	local t = AceComm.userRegistry[channel]
+	local t = self.userRegistry[channel]
 	t[user] = true
 end
 
@@ -1952,21 +1912,13 @@ function AceComm:CHAT_MSG_CHANNEL_LEAVE(_, user, _, _, _, _, _, _, channel)
 		return
 	end
 	
-	if not AceComm.userRegistry[channel] then
-		AceComm.userRegistry[channel] = new()
+	if not self.userRegistry[channel] then
+		self.userRegistry[channel] = new()
 	end
-	local t = AceComm.userRegistry[channel]
+	local t = self.userRegistry[channel]
 	if t[user] then
 		t[user] = nil
 	end
-end
-
-function AceComm:AceEvent_FullyInitialized()
-	RefixAceCommChannelsAndEvents()
-end
-
-function AceComm:PLAYER_LOGOUT()
-	LeaveAceCommChannels(true)
 end
 
 function AceComm:ZONE_CHANGED_NEW_AREA()
@@ -1994,39 +1946,37 @@ local notSeenString = '^' .. _G.ERR_CHAT_PLAYER_NOT_FOUND_S:gsub("%%s", "(.-)"):
 local ambiguousString = '^' .. _G.ERR_CHAT_PLAYER_AMBIGUOUS_S:gsub("%%s", "(.-)"):gsub("%%1%$s", "(.-)") .. '$'
 local ERR_GUILD_PERMISSIONS = _G.ERR_GUILD_PERMISSIONS
 function AceComm.hooks:ChatFrame_MessageEventHandler(orig, event)
-	if event == "CHAT_MSG_CHANNEL" or event == "CHAT_MSG_CHANNEL_LIST" then
-		if _G.arg9:find("^AceComm") then
-			return
-		end
+	if (event == "CHAT_MSG_CHANNEL" or event == "CHAT_MSG_CHANNEL_LIST") and _G.arg9:find("^AceComm") then
+		return
 	elseif event == "CHAT_MSG_SYSTEM" then
 		local arg1 = _G.arg1
-		local player = arg1:match(notSeenString) or arg1:match(ambiguousString)
-		if player then
-			local t = GetTime()
-			if recentNotSeen[player] and recentNotSeen[player] > t then
-				recentNotSeen[player] = t + 10
-				return
-			else
-				recentNotSeen[player] = t + 10
-			end
-		elseif arg1 == ERR_GUILD_PERMISSIONS then
+		if arg1 == ERR_GUILD_PERMISSIONS then
 			if recentGuildMessage > GetTime() then
 				stopGuildMessages = true
 				return
+			end
+		else
+			local player = arg1:match(notSeenString) or arg1:match(ambiguousString)
+			if player then
+				local t = GetTime()
+				if recentNotSeen[player] and recentNotSeen[player] > t then
+					recentNotSeen[player] = t + 10
+					return
+				else
+					recentNotSeen[player] = t + 10
+				end
 			end
 		end
 	end
 	return orig(event)
 end
 
-local loggingOut
 function AceComm.hooks:Logout(orig)
 	if IsResting() then
-		LeaveAceCommChannels(true)
+		LeaveAceCommChannels()
 	else
-		self:ScheduleEvent("AceComm-LeaveAceCommChannels", LeaveAceCommChannels, 15, true)
+		self:ScheduleEvent("AceComm-LeaveAceCommChannels", LeaveAceCommChannels, 15)
 	end
-	loggingOut = true
 	return orig()
 end
 
@@ -2034,17 +1984,15 @@ function AceComm.hooks:CancelLogout(orig)
 	shutdown = false
 	self:CancelScheduledEvent("AceComm-LeaveAceCommChannels")
 	RefixAceCommChannelsAndEvents()
-	loggingOut = false
 	return orig()
 end
 
 function AceComm.hooks:Quit(orig)
 	if IsResting() then
-		LeaveAceCommChannels(true)
+		LeaveAceCommChannels()
 	else
-		self:ScheduleEvent("AceComm-LeaveAceCommChannels", LeaveAceCommChannels, 15, true)
+		self:ScheduleEvent("AceComm-LeaveAceCommChannels", LeaveAceCommChannels, 15)
 	end
-	loggingOut = true
 	return orig()
 end
 
@@ -2066,37 +2014,32 @@ function AceComm:CHAT_MSG_SYSTEM(text)
 	if text ~= _G.ERR_TOO_MANY_CHAT_CHANNELS then
 		return
 	end
-	
-	local chan = lastChannelJoined
-	if not chan then
-		return
-	end
-	if not lastChannelJoined:find("^AceComm") then
+	if not lastChannelJoined or not lastChannelJoined:find("^AceComm") then
 		return
 	end
 	
 	local text
-	if chan == "AceComm" then
-		local addon = self.registry.GLOBAL and next(AceComm_registry.GLOBAL)
+	if lastChannelJoined == "AceComm" then
+		local addon = AceComm_registry.GLOBAL and next(AceComm_registry.GLOBAL)
 		if not addon then
 			return
 		end
 		addon = tostring(addon)
-		text = ("%s has tried to join the AceComm global channel, but there are not enough channels available. %s may not work because of this"):format(addon, addon)
-	elseif chan == GetCurrentZoneChannel() then
+		text = ("%s has tried to join the AceComm global channel, but there are not enough channels available. %s may not work because of this."):format(addon, addon)
+	elseif lastChannelJoined == GetCurrentZoneChannel() then
 		local addon = AceComm_registry.ZONE and next(AceComm_registry.ZONE)
 		if not addon then
 			return
 		end
 		addon = tostring(addon)
-		text = ("%s has tried to join the AceComm zone channel, but there are not enough channels available. %s may not work because of this"):format(addon, addon)
+		text = ("%s has tried to join the AceComm zone channel, but there are not enough channels available. %s may not work because of this."):format(addon, addon)
 	else
-		local addon = AceComm_registry.CUSTOM and AceComm_registry.CUSTOM[chan] and next(AceComm_registry.CUSTOM[chan])
+		local addon = AceComm_registry.CUSTOM and AceComm_registry.CUSTOM[lastChannelJoined] and next(AceComm_registry.CUSTOM[lastChannelJoined])
 		if not addon then
 			return
 		end
 		addon = tostring(addon)
-		text = ("%s has tried to join the AceComm custom channel %s, but there are not enough channels available. %s may not work because of this"):format(addon, chan, addon)
+		text = ("%s has tried to join the AceComm custom channel %s, but there are not enough channels available. %s may not work because of this."):format(addon, lastChannelJoined, addon)
 	end
 	
 	_G.StaticPopupDialogs["ACECOMM_TOO_MANY_CHANNELS"] = {
@@ -2242,18 +2185,18 @@ local function external(self, major, instance)
 	if major == "AceEvent-2.0" then
 		AceEvent = instance
 		
-		AceEvent:embed(AceComm)
+		AceEvent:embed(self)
 		
 		self:UnregisterAllEvents()
 		self:CancelAllScheduledEvents()
 		
 		if AceEvent:IsFullyInitialized() then
-			self:AceEvent_FullyInitialized()
+			RefixAceCommChannelsAndEvents()
 		else
-			self:RegisterEvent("AceEvent_FullyInitialized", "AceEvent_FullyInitialized", true)
+			self:RegisterEvent("AceEvent_FullyInitialized", RefixAceCommChannelsAndEvents, true)
 		end
 		
-		self:RegisterEvent("PLAYER_LOGOUT")
+		self:RegisterEvent("PLAYER_LOGOUT", LeaveAceCommChannels)
 		self:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 		self:RegisterEvent("CHAT_MSG_CHANNEL_NOTICE")
 		self:RegisterEvent("CHAT_MSG_SYSTEM")
@@ -2270,10 +2213,16 @@ local function external(self, major, instance)
 		self.addonVersionPinger.OnCommReceive = {
 			PING = function(self, prefix, sender, distribution, addon)
 				local version = ""
-				if AceLibrary:HasInstance(addon) then
-					local revision
-					version, revision = AceLibrary(addon):GetLibraryVersion()
-					version = version .. "-" .. revision
+				if AceLibrary:HasInstance(addon, false) then
+					local lib = AceLibrary(addon)
+					if lib.GetLibraryVersion then
+						local revision
+						version, revision = lib:GetLibraryVersion()
+						version = version .. "-" .. revision
+					end
+				elseif LibStub(addon, true) then
+					local _, revision = LibStub(addon, true)
+					version = addon .. "-" .. revision
 				else
 					local revision
 					local _G_addon = _G[addon]
@@ -2319,11 +2268,13 @@ local function external(self, major, instance)
 					if not version or version == "" then
 						version = GetAddOnMetadata(addon, "Version")
 						if version and version ~= "" and not IsAddOnLoaded(addon) then
-							version = version .. " (Off)"
+							local enabled, loadable = select(4, GetAddOnInfo(addon))  
+							version = enabled and loadable and version .. " (LoD)" or version .. " (Off)"
 						end
 					end
 					if not version or version == "" then
-						version = IsAddOnLoaded(addon) and true or false
+						local enabled, loadable = select(4, GetAddOnInfo(addon))  
+						version = IsAddOnLoaded(addon) and true or enabled and loadable and "(LoD)" or false
 					end
 				end
 				self:SendCommMessage("WHISPER", sender, "PONG", addon, version)
@@ -2350,10 +2301,8 @@ local function external(self, major, instance)
 		self.addonVersionPinger:RegisterComm("Version", "RAID")
 		self.addonVersionPinger:RegisterComm("Version", "PARTY")
 		self.addonVersionPinger:RegisterComm("Version", "BATTLEGROUND")
-	else
-		if AceOO.inherits(instance, AceOO.Class) and not instance.class then
-			self.classes[TailoredNumericCheckSum(major)] = instance
-		end
+	elseif AceOO.inherits(instance, AceOO.Class) and not instance.class then
+		self.classes[TailoredNumericCheckSum(major)] = instance
 	end
 end
 

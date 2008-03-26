@@ -1,8 +1,8 @@
-## Interface: 20300
+## Interface: 20400
 ## Title: QuestAnnouncer2
 ## Notes: Sends a party message as you advance in a quest.
 ## Author: Jason Olivarez
-## Version: $Revision: 26 $
+## Version: $Revision: 31 $
 ## OptionalDeps: Ace2
 ## SavedVariables: QuestAnnouncer2DB
 ## SavedVariablesPerCharacter: QuestAnnouncer2DBPC

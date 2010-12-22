@@ -24,7 +24,7 @@ AceLocale:RegisterTranslations("enUS", function()
 		["DISPLAY_UI_MYFAILED"] = "You have failed %s",
 		["DISPLAY_UI_MYUPDATE"] = "My quest progress... %s",
 		
-		["OUT_OF_VERSION"] = "%s is using a newer version (rev. %s) of QuestAnnouncer2. Please visit www.theoneders.com to update.",
+		["OUT_OF_VERSION"] = "%s is using a newer version (rev. %s) of QuestAnnouncer2. Please visit wowui.worldofwar.net to update.",
 		["UI_SCHEMA"] = "(.*):%s*([-%d]+)%s*/%s*([-%d]+)%s*$",
 	}
 end)
